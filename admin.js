@@ -19,6 +19,9 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
+// Initialize EmailJS
+emailjs.init('i3L63-9eZOLxLsVkF');
+
 // DOM Elements
 const loginSection = document.getElementById('loginSection');
 const dashboard = document.getElementById('dashboard');
@@ -301,10 +304,10 @@ function updateTable() {
         </td>
         <td>
           ${reg.status === 'Pending' ? `
-            <button class="action-btn approve-btn" onclick="approveRegistration('${reg.key}', '${reg.name}')">
+            <button class="action-btn approve-btn" onclick="approveRegistration('${reg.key}', '${reg.name}', '${reg.email}')">
               <i class="fas fa-check"></i> Approve
             </button>
-          ` : 'Approved'}
+          ` : '<span style="color: #2ecc71; font-weight: 500;">✓ Approved</span>'}
         </td>
       </tr>
     `;
@@ -321,19 +324,82 @@ function updatePagination() {
   nextBtn.disabled = currentPage === totalPages;
 }
 
-// Approve Registration
-window.approveRegistration = async function(key, name) {
-  if (!confirm(`Are you sure you want to approve registration for ${name}?`)) {
+// Function to send approval email via EmailJS
+function sendApprovalEmail(name, email, regId) {
+  // Your EmailJS Service ID and Template ID
+  const serviceID = 'YOUR_SERVICE_ID';  // আপনার service ID বসাবেন
+  const templateID = 'YOUR_TEMPLATE_ID'; // আপনার template ID বসাবেন
+  
+  const templateParams = {
+    student_name: name,
+    reg_id: regId,
+    to_email: email,
+    college_name: 'GMMCC',
+    picnic_date: '25th March, 2026',
+    picnic_venue: 'Shishu Park & Resort'
+  };
+
+  emailjs.send(serviceID, templateID, templateParams)
+    .then(response => {
+      console.log('Email sent successfully!', response.status, response.text);
+      showToast(`Confirmation email sent to ${name}!`, 'success');
+    })
+    .catch(err => {
+      console.error('Email sending error:', err);
+      showToast(`Failed to send email to ${name}`, 'error');
+    });
+}
+
+// Approve Registration with Email Notification
+window.approveRegistration = async function(key, name, email) {
+  // Show confirmation dialog
+  if (!confirm(`Are you sure you want to approve registration for ${name}?\n\nAn approval email will be sent to ${email}`)) {
     return;
   }
   
   try {
+    // Update status in Firebase
     await update(ref(db, 'registrations/' + key), { 
       status: 'Approved',
-      approvedAt: Date.now()
+      approvedAt: Date.now(),
+      approvedBy: adminName.textContent || 'Admin'
     });
     
+    // Show success message
     showToast(`Registration approved for ${name}!`, 'success');
+    
+    // Send approval email if email exists
+    if (email && email.includes('@')) {
+      // Use registration ID from database or generate one
+      const regRef = ref(db, 'registrations/' + key);
+      const snapshot = await get(regRef);
+      
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const regId = data.reg_id || key.substring(0, 8).toUpperCase();
+        
+        // Send email
+        sendApprovalEmail(name, email, regId);
+        
+        // Update local registration status
+        const regIndex = allRegistrations.findIndex(r => r.key === key);
+        if (regIndex !== -1) {
+          allRegistrations[regIndex].status = 'Approved';
+          updateStats();
+          applyFilters();
+        }
+      }
+    } else {
+      showToast(`Registration approved, but no email sent (invalid email: ${email})`, 'warning');
+      
+      // Update local registration status even without email
+      const regIndex = allRegistrations.findIndex(r => r.key === key);
+      if (regIndex !== -1) {
+        allRegistrations[regIndex].status = 'Approved';
+        updateStats();
+        applyFilters();
+      }
+    }
     
   } catch (error) {
     console.error('Error approving registration:', error);
@@ -420,7 +486,72 @@ function showToast(message, type = 'info') {
 // Auto-focus email input on page load
 window.addEventListener('load', () => {
   adminEmail.focus();
+});
+
+// Email Settings Modal (Optional - for changing email settings)
+function showEmailSettings() {
+  const modal = document.createElement('div');
+  modal.className = 'email-settings-modal';
+  modal.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  `;
   
-  // You can pre-fill email for convenience (optional)
-  // adminEmail.value = 'akonsiam45@gmail.com';
+  modal.innerHTML = `
+    <div style="background: white; padding: 30px; border-radius: 10px; width: 90%; max-width: 500px;">
+      <h3 style="margin-bottom: 20px; color: #0b3c5d;">
+        <i class="fas fa-envelope"></i> Email Settings
+      </h3>
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Service ID</label>
+        <input type="text" id="emailServiceID" value="YOUR_SERVICE_ID" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+      </div>
+      <div style="margin-bottom: 20px;">
+        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Template ID</label>
+        <input type="text" id="emailTemplateID" value="YOUR_TEMPLATE_ID" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding: 10px 20px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 5px; cursor: pointer;">
+          Cancel
+        </button>
+        <button onclick="saveEmailSettings()" style="padding: 10px 20px; background: #0b3c5d; color: white; border: none; border-radius: 5px; cursor: pointer;">
+          Save Settings
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+}
+
+// Function to save email settings
+window.saveEmailSettings = function() {
+  const serviceID = document.getElementById('emailServiceID').value;
+  const templateID = document.getElementById('emailTemplateID').value;
+  
+  // Here you would typically save these to localStorage or your database
+  localStorage.setItem('emailServiceID', serviceID);
+  localStorage.setItem('emailTemplateID', templateID);
+  
+  showToast('Email settings saved!', 'success');
+  document.querySelector('.email-settings-modal').remove();
+};
+
+// Load saved email settings on page load
+window.addEventListener('load', () => {
+  const savedServiceID = localStorage.getItem('emailServiceID');
+  const savedTemplateID = localStorage.getItem('emailTemplateID');
+  
+  if (savedServiceID && savedTemplateID) {
+    // You can use these saved values in your sendApprovalEmail function
+    console.log('Loaded saved email settings');
+  }
 });
