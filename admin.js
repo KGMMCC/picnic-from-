@@ -1,0 +1,426 @@
+// Import Firebase modules
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+import { getDatabase, ref, get, update, onValue } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+
+// Firebase Configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyCNDT0P_2lL1cxrVfRJ19rLg1_JoTwiLU4",
+  authDomain: "gmmcc-picnic.firebaseapp.com",
+  databaseURL: "https://gmmcc-picnic-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "gmmcc-picnic",
+  storageBucket: "gmmcc-picnic.firebaseapp.com",
+  messagingSenderId: "659544860374",
+  appId: "1:659544860374:web:70bac069b946be11ee4b77"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
+
+// DOM Elements
+const loginSection = document.getElementById('loginSection');
+const dashboard = document.getElementById('dashboard');
+const loginBtn = document.getElementById('loginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const adminEmail = document.getElementById('adminEmail');
+const adminPass = document.getElementById('adminPass');
+const loginMsg = document.getElementById('loginMsg');
+const adminName = document.getElementById('adminName');
+const togglePassword = document.getElementById('togglePassword');
+
+// Stats Elements
+const totalRegistrations = document.getElementById('totalRegistrations');
+const pendingRegistrations = document.getElementById('pendingRegistrations');
+const approvedRegistrations = document.getElementById('approvedRegistrations');
+const todayRegistrations = document.getElementById('todayRegistrations');
+
+// Table Elements
+const tableBody = document.getElementById('tableBody');
+const searchInput = document.getElementById('searchInput');
+const paymentFilter = document.getElementById('paymentFilter');
+const refreshBtn = document.getElementById('refreshBtn');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const pageInfo = document.getElementById('pageInfo');
+
+// Global Variables
+let allRegistrations = [];
+let filteredRegistrations = [];
+let currentFilter = 'all';
+let currentPage = 1;
+const itemsPerPage = 10;
+
+// Toggle Password Visibility
+togglePassword.addEventListener('click', function() {
+  const type = adminPass.getAttribute('type') === 'password' ? 'text' : 'password';
+  adminPass.setAttribute('type', type);
+  this.innerHTML = type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+});
+
+// Login Function
+loginBtn.addEventListener('click', async () => {
+  const email = adminEmail.value.trim();
+  const password = adminPass.value.trim();
+
+  if (!email || !password) {
+    showMessage('Please enter both email and password!', 'error');
+    return;
+  }
+
+  try {
+    // Disable login button and show loading
+    loginBtn.disabled = true;
+    loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
+
+    // Sign in with Firebase Authentication
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    // Update admin name display
+    adminName.textContent = user.email;
+
+    // Show success message
+    showMessage('Login successful! Loading dashboard...', 'success');
+
+    // Switch to dashboard after a short delay
+    setTimeout(() => {
+      loginSection.style.display = 'none';
+      dashboard.style.display = 'block';
+      
+      // Load registrations data
+      loadRegistrations();
+      
+      // Start real-time updates
+      startRealtimeUpdates();
+    }, 1000);
+
+  } catch (error) {
+    console.error('Login error:', error);
+    
+    let errorMessage = 'Login failed! ';
+    switch (error.code) {
+      case 'auth/invalid-email':
+        errorMessage += 'Invalid email address.';
+        break;
+      case 'auth/user-disabled':
+        errorMessage += 'This account has been disabled.';
+        break;
+      case 'auth/user-not-found':
+        errorMessage += 'No account found with this email.';
+        break;
+      case 'auth/wrong-password':
+        errorMessage += 'Incorrect password.';
+        break;
+      case 'auth/too-many-requests':
+        errorMessage += 'Too many login attempts. Please try again later.';
+        break;
+      default:
+        errorMessage += 'Please check your credentials.';
+    }
+    
+    showMessage(errorMessage, 'error');
+    
+  } finally {
+    // Reset login button
+    loginBtn.disabled = false;
+    loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login to Dashboard';
+  }
+});
+
+// Logout Function
+logoutBtn.addEventListener('click', async () => {
+  try {
+    await signOut(auth);
+    dashboard.style.display = 'none';
+    loginSection.style.display = 'block';
+    adminEmail.value = '';
+    adminPass.value = '';
+    showMessage('Logged out successfully!', 'success');
+  } catch (error) {
+    showMessage('Logout failed: ' + error.message, 'error');
+  }
+});
+
+// Load Registrations from Firebase
+async function loadRegistrations() {
+  try {
+    const registrationsRef = ref(db, 'registrations');
+    const snapshot = await get(registrationsRef);
+    
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      
+      // Convert object to array
+      allRegistrations = Object.entries(data).map(([key, value]) => ({
+        key,
+        ...value,
+        timestamp: value.timestamp || Date.now()
+      }));
+      
+      // Sort by timestamp (newest first)
+      allRegistrations.sort((a, b) => b.timestamp - a.timestamp);
+      
+      // Update stats and table
+      updateStats();
+      applyFilters();
+      
+    } else {
+      allRegistrations = [];
+      updateStats();
+      applyFilters();
+      showToast('No registrations found yet.', 'info');
+    }
+    
+  } catch (error) {
+    console.error('Error loading registrations:', error);
+    showToast('Failed to load registrations: ' + error.message, 'error');
+  }
+}
+
+// Start Real-time Updates
+function startRealtimeUpdates() {
+  const registrationsRef = ref(db, 'registrations');
+  
+  onValue(registrationsRef, (snapshot) => {
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      
+      allRegistrations = Object.entries(data).map(([key, value]) => ({
+        key,
+        ...value,
+        timestamp: value.timestamp || Date.now()
+      }));
+      
+      allRegistrations.sort((a, b) => b.timestamp - a.timestamp);
+      updateStats();
+      applyFilters();
+    }
+  });
+}
+
+// Update Statistics
+function updateStats() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayTimestamp = today.getTime();
+  
+  const total = allRegistrations.length;
+  const pending = allRegistrations.filter(r => r.status === 'Pending').length;
+  const approved = allRegistrations.filter(r => r.status === 'Approved').length;
+  const todayRegs = allRegistrations.filter(r => {
+    const regDate = new Date(r.timestamp);
+    regDate.setHours(0, 0, 0, 0);
+    return regDate.getTime() === todayTimestamp;
+  }).length;
+  
+  totalRegistrations.textContent = total;
+  pendingRegistrations.textContent = pending;
+  approvedRegistrations.textContent = approved;
+  todayRegistrations.textContent = todayRegs;
+}
+
+// Apply Filters and Search
+function applyFilters() {
+  filteredRegistrations = [...allRegistrations];
+  
+  // Apply status filter
+  if (currentFilter !== 'all') {
+    filteredRegistrations = filteredRegistrations.filter(r => r.status === currentFilter);
+  }
+  
+  // Apply payment method filter
+  const paymentValue = paymentFilter.value;
+  if (paymentValue) {
+    filteredRegistrations = filteredRegistrations.filter(r => r.payment === paymentValue);
+  }
+  
+  // Apply search
+  const searchTerm = searchInput.value.toLowerCase();
+  if (searchTerm) {
+    filteredRegistrations = filteredRegistrations.filter(r => 
+      r.name?.toLowerCase().includes(searchTerm) ||
+      r.roll?.toLowerCase().includes(searchTerm) ||
+      r.phone?.toLowerCase().includes(searchTerm) ||
+      r.email?.toLowerCase().includes(searchTerm)
+    );
+  }
+  
+  currentPage = 1;
+  updateTable();
+  updatePagination();
+}
+
+// Update Table
+function updateTable() {
+  if (filteredRegistrations.length === 0) {
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
+          <i class="fas fa-inbox" style="font-size: 40px; margin-bottom: 15px; opacity: 0.3;"></i>
+          <p>No registrations found</p>
+          <p style="font-size: 13px; margin-top: 10px;">Try changing your filters or search term</p>
+        </td>
+      </tr>
+    `;
+    return;
+  }
+  
+  // Calculate pagination
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const pageRegistrations = filteredRegistrations.slice(startIndex, endIndex);
+  
+  // Generate table rows
+  tableBody.innerHTML = pageRegistrations.map(reg => {
+    const date = new Date(reg.timestamp);
+    const formattedTime = date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const formattedDate = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    });
+    
+    return `
+      <tr>
+        <td><strong>${reg.name || 'N/A'}</strong></td>
+        <td>${reg.roll || 'N/A'}</td>
+        <td>${reg.phone || 'N/A'}</td>
+        <td>${reg.email || 'N/A'}</td>
+        <td>${reg.payment || 'N/A'}</td>
+        <td>
+          <span class="status-badge status-${reg.status?.toLowerCase() || 'pending'}">
+            ${reg.status || 'Pending'}
+          </span>
+        </td>
+        <td title="${new Date(reg.timestamp).toLocaleString()}">
+          ${formattedDate}<br><small>${formattedTime}</small>
+        </td>
+        <td>
+          ${reg.status === 'Pending' ? `
+            <button class="action-btn approve-btn" onclick="approveRegistration('${reg.key}', '${reg.name}')">
+              <i class="fas fa-check"></i> Approve
+            </button>
+          ` : 'Approved'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// Update Pagination
+function updatePagination() {
+  const totalPages = Math.ceil(filteredRegistrations.length / itemsPerPage);
+  
+  pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+  
+  prevBtn.disabled = currentPage === 1;
+  nextBtn.disabled = currentPage === totalPages;
+}
+
+// Approve Registration
+window.approveRegistration = async function(key, name) {
+  if (!confirm(`Are you sure you want to approve registration for ${name}?`)) {
+    return;
+  }
+  
+  try {
+    await update(ref(db, 'registrations/' + key), { 
+      status: 'Approved',
+      approvedAt: Date.now()
+    });
+    
+    showToast(`Registration approved for ${name}!`, 'success');
+    
+  } catch (error) {
+    console.error('Error approving registration:', error);
+    showToast('Failed to approve registration: ' + error.message, 'error');
+  }
+};
+
+// Event Listeners for Filters
+searchInput.addEventListener('input', () => {
+  applyFilters();
+});
+
+paymentFilter.addEventListener('change', () => {
+  applyFilters();
+});
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(button => {
+  button.addEventListener('click', function() {
+    // Remove active class from all buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    
+    // Add active class to clicked button
+    this.classList.add('active');
+    
+    // Update current filter
+    currentFilter = this.dataset.filter;
+    
+    // Apply filters
+    applyFilters();
+  });
+});
+
+// Pagination buttons
+prevBtn.addEventListener('click', () => {
+  if (currentPage > 1) {
+    currentPage--;
+    updateTable();
+    updatePagination();
+  }
+});
+
+nextBtn.addEventListener('click', () => {
+  const totalPages = Math.ceil(filteredRegistrations.length / itemsPerPage);
+  if (currentPage < totalPages) {
+    currentPage++;
+    updateTable();
+    updatePagination();
+  }
+});
+
+// Refresh button
+refreshBtn.addEventListener('click', () => {
+  loadRegistrations();
+  showToast('Data refreshed!', 'success');
+});
+
+// Helper Functions
+function showMessage(message, type) {
+  loginMsg.textContent = message;
+  loginMsg.className = `message ${type}`;
+  loginMsg.style.display = 'block';
+  
+  // Auto-hide message after 3 seconds
+  setTimeout(() => {
+    loginMsg.style.display = 'none';
+  }, 3000);
+}
+
+function showToast(message, type = 'info') {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = `toast ${type}`;
+  toast.style.display = 'flex';
+  
+  // Auto-hide toast after 3 seconds
+  setTimeout(() => {
+    toast.style.display = 'none';
+  }, 3000);
+}
+
+// Auto-focus email input on page load
+window.addEventListener('load', () => {
+  adminEmail.focus();
+  
+  // You can pre-fill email for convenience (optional)
+  // adminEmail.value = 'akonsiam45@gmail.com';
+});
