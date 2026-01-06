@@ -8,11 +8,14 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <!-- Firebase -->
-  <script type="module" src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js"></script>
-  <script type="module" src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js"></script>
-  <script type="module" src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js"></script>
+  <!-- EmailJS -->
+  <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
 </head>
 <body>
+  
   <!-- Login Section -->
   <div id="loginSection" class="login-section">
     <div class="login-card">
@@ -26,14 +29,14 @@
       
       <div class="login-body">
         <div class="input-group">
-          <label for="adminEmail"><i class="fas fa-envelope"></i> Email</label>
-          <input type="email" id="adminEmail" placeholder="Enter your email">
+          <label for="adminEmail"><i class="fas fa-envelope"></i> Admin Email</label>
+          <input type="email" id="adminEmail" placeholder="admin@example.com" autocomplete="email">
         </div>
         
         <div class="input-group">
           <label for="adminPass"><i class="fas fa-lock"></i> Password</label>
           <div class="password-wrapper">
-            <input type="password" id="adminPass" placeholder="Enter your password">
+            <input type="password" id="adminPass" placeholder="Enter password" autocomplete="current-password">
             <button type="button" id="togglePassword" class="eye-btn">
               <i class="fas fa-eye"></i>
             </button>
@@ -47,7 +50,7 @@
         <div id="loginMsg" class="message"></div>
         
         <div class="login-info">
-          <p><i class="fas fa-info-circle"></i> Use your Firebase Authentication credentials</p>
+          <p><i class="fas fa-key"></i> Use your Firebase admin credentials</p>
         </div>
       </div>
     </div>
@@ -62,7 +65,10 @@
         <p>Picnic Registration Management</p>
       </div>
       <div class="header-right">
-        <span id="adminName" class="admin-name"></span>
+        <div class="admin-info">
+          <i class="fas fa-user-circle"></i>
+          <span id="adminName" class="admin-name">Admin User</span>
+        </div>
         <button id="logoutBtn" class="logout-btn">
           <i class="fas fa-sign-out-alt"></i> Logout
         </button>
@@ -70,9 +76,9 @@
     </header>
 
     <!-- Stats Section -->
-    <div class="stats-section">
+    <section class="stats-section">
       <div class="stat-card">
-        <div class="stat-icon" style="background: #3498db;">
+        <div class="stat-icon total">
           <i class="fas fa-users"></i>
         </div>
         <div class="stat-info">
@@ -82,7 +88,7 @@
       </div>
       
       <div class="stat-card">
-        <div class="stat-icon" style="background: #f39c12;">
+        <div class="stat-icon pending">
           <i class="fas fa-clock"></i>
         </div>
         <div class="stat-info">
@@ -92,7 +98,7 @@
       </div>
       
       <div class="stat-card">
-        <div class="stat-icon" style="background: #2ecc71;">
+        <div class="stat-icon approved">
           <i class="fas fa-check-circle"></i>
         </div>
         <div class="stat-info">
@@ -102,7 +108,7 @@
       </div>
       
       <div class="stat-card">
-        <div class="stat-icon" style="background: #9b59b6;">
+        <div class="stat-icon today">
           <i class="fas fa-calendar-day"></i>
         </div>
         <div class="stat-info">
@@ -110,48 +116,59 @@
           <p>Today</p>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- Search and Filter -->
-    <div class="filter-section">
-      <div class="search-box">
-        <i class="fas fa-search"></i>
-        <input type="text" id="searchInput" placeholder="Search by name, roll, phone or email...">
+    <section class="filter-section">
+      <div class="search-container">
+        <div class="search-box">
+          <i class="fas fa-search"></i>
+          <input type="text" id="searchInput" placeholder="Search by name, roll, phone or email...">
+        </div>
+        
+        <div class="filter-container">
+          <div class="filter-buttons">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="Pending">Pending</button>
+            <button class="filter-btn" data-filter="Approved">Approved</button>
+          </div>
+          
+          <select id="paymentFilter" class="payment-select">
+            <option value="">All Payments</option>
+            <option value="bKash">bKash</option>
+            <option value="Nagad">Nagad</option>
+          </select>
+        </div>
       </div>
-      
-      <div class="filter-btns">
-        <button class="filter-btn active" data-filter="all">All</button>
-        <button class="filter-btn" data-filter="Pending">Pending</button>
-        <button class="filter-btn" data-filter="Approved">Approved</button>
-        <select id="paymentFilter" class="payment-select">
-          <option value="">All Payments</option>
-          <option value="bKash">bKash</option>
-          <option value="Nagad">Nagad</option>
-        </select>
-      </div>
-    </div>
+    </section>
 
     <!-- Registrations Table -->
-    <div class="table-section">
+    <section class="table-section">
       <div class="table-header">
         <h2><i class="fas fa-list"></i> All Registrations</h2>
-        <button id="refreshBtn" class="refresh-btn">
-          <i class="fas fa-sync-alt"></i> Refresh
-        </button>
+        <div class="table-actions">
+          <button id="refreshBtn" class="refresh-btn">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+          <button id="exportBtn" class="export-btn">
+            <i class="fas fa-download"></i> Export CSV
+          </button>
+        </div>
       </div>
       
       <div class="table-container">
         <table id="regTable">
           <thead>
             <tr>
+              <th>Reg ID</th>
               <th>Name</th>
               <th>Roll</th>
               <th>Phone</th>
-              <th>Email</th>
               <th>Payment</th>
+              <th>Transaction ID</th>
               <th>Status</th>
-              <th>Time</th>
-              <th>Action</th>
+              <th>Registered</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="tableBody">
@@ -161,23 +178,34 @@
       </div>
       
       <div class="table-footer">
+        <div class="pagination-info">
+          Showing <span id="startItem">0</span>-<span id="endItem">0</span> of <span id="totalItems">0</span>
+        </div>
         <div class="pagination">
-          <button id="prevBtn" class="page-btn"><i class="fas fa-chevron-left"></i></button>
+          <button id="prevBtn" class="page-btn" disabled>
+            <i class="fas fa-chevron-left"></i>
+          </button>
           <span id="pageInfo" class="page-info">Page 1 of 1</span>
-          <button id="nextBtn" class="page-btn"><i class="fas fa-chevron-right"></i></button>
+          <button id="nextBtn" class="page-btn" disabled>
+            <i class="fas fa-chevron-right"></i>
+          </button>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- Footer -->
     <footer class="dashboard-footer">
       <p>© 2026 GMMCC Picnic Committee | Admin Panel v1.0</p>
+      <p class="server-status">
+        <i class="fas fa-circle" id="serverStatus"></i>
+        <span id="serverStatusText">Disconnected</span>
+      </p>
     </footer>
   </div>
 
   <!-- Toast Notification -->
   <div id="toast" class="toast"></div>
 
-  <script type="module" src="admin.js"></script>
+  <script src="admin.js"></script>
 </body>
 </html>
