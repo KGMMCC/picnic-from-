@@ -1,30 +1,32 @@
-// Import Firebase modules
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { getDatabase, ref, get, update, onValue } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
-
-// Firebase Configuration
+// Firebase Configuration - আপনার Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyCNDT0P_2lL1cxrVfRJ19rLg1_JoTwiLU4",
   authDomain: "gmmcc-picnic.firebaseapp.com",
   databaseURL: "https://gmmcc-picnic-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "gmmcc-picnic",
-  storageBucket: "gmmcc-picnic.firebaseapp.com",
+  storageBucket: "gmmcc-picnic.appspot.com",
   messagingSenderId: "659544860374",
   appId: "1:659544860374:web:70bac069b946be11ee4b77"
 };
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getDatabase(app);
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const database = firebase.database();
 
-// Initialize EmailJS
-emailjs.init('i3L63-9eZOLxLsVkF');
+// Initialize EmailJS - আপনার Public Key
+emailjs.init("i3L63-9eZOLxLsVkF");
+
+// EmailJS Configuration - আপনার Service এবং Template IDs
+const EMAILJS_CONFIG = {
+  SERVICE_ID: 'service_0eawslg',
+  TEMPLATE_ID: 'template_0ahqigr'
+};
 
 // DOM Elements
 const loginSection = document.getElementById('loginSection');
 const dashboard = document.getElementById('dashboard');
+const loadingOverlay = document.getElementById('loadingOverlay');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const adminEmail = document.getElementById('adminEmail');
@@ -32,6 +34,8 @@ const adminPass = document.getElementById('adminPass');
 const loginMsg = document.getElementById('loginMsg');
 const adminName = document.getElementById('adminName');
 const togglePassword = document.getElementById('togglePassword');
+const serverStatus = document.getElementById('serverStatus');
+const serverStatusText = document.getElementById('serverStatusText');
 
 // Stats Elements
 const totalRegistrations = document.getElementById('totalRegistrations');
@@ -44,16 +48,35 @@ const tableBody = document.getElementById('tableBody');
 const searchInput = document.getElementById('searchInput');
 const paymentFilter = document.getElementById('paymentFilter');
 const refreshBtn = document.getElementById('refreshBtn');
+const exportBtn = document.getElementById('exportBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const pageInfo = document.getElementById('pageInfo');
+const startItem = document.getElementById('startItem');
+const endItem = document.getElementById('endItem');
+const totalItems = document.getElementById('totalItems');
 
 // Global Variables
 let allRegistrations = [];
 let filteredRegistrations = [];
 let currentFilter = 'all';
 let currentPage = 1;
-const itemsPerPage = 10;
+const itemsPerPage = 15;
+let searchTimeout;
+let isConnected = false;
+
+// Loading Overlay Management
+function showLoading() {
+  if (loadingOverlay) {
+    loadingOverlay.classList.remove('hidden');
+  }
+}
+
+function hideLoading() {
+  if (loadingOverlay) {
+    loadingOverlay.classList.add('hidden');
+  }
+}
 
 // Toggle Password Visibility
 togglePassword.addEventListener('click', function() {
@@ -63,7 +86,16 @@ togglePassword.addEventListener('click', function() {
 });
 
 // Login Function
-loginBtn.addEventListener('click', async () => {
+loginBtn.addEventListener('click', handleLogin);
+
+// Enter key login
+adminPass.addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') {
+    handleLogin();
+  }
+});
+
+async function handleLogin() {
   const email = adminEmail.value.trim();
   const password = adminPass.value.trim();
 
@@ -73,84 +105,106 @@ loginBtn.addEventListener('click', async () => {
   }
 
   try {
-    // Disable login button and show loading
+    showLoading();
     loginBtn.disabled = true;
     loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
 
-    // Sign in with Firebase Authentication
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const userCredential = await auth.signInWithEmailAndPassword(email, password);
     const user = userCredential.user;
 
-    // Update admin name display
+    // Update admin name
     adminName.textContent = user.email;
 
-    // Show success message
     showMessage('Login successful! Loading dashboard...', 'success');
 
-    // Switch to dashboard after a short delay
     setTimeout(() => {
       loginSection.style.display = 'none';
       dashboard.style.display = 'block';
       
-      // Load registrations data
+      // Load registrations
       loadRegistrations();
       
       // Start real-time updates
       startRealtimeUpdates();
-    }, 1000);
+      
+      // Update server status
+      updateServerStatus(true);
+    }, 1500);
 
   } catch (error) {
     console.error('Login error:', error);
-    
     let errorMessage = 'Login failed! ';
+    
     switch (error.code) {
       case 'auth/invalid-email':
         errorMessage += 'Invalid email address.';
         break;
       case 'auth/user-disabled':
-        errorMessage += 'This account has been disabled.';
+        errorMessage += 'Account disabled.';
         break;
       case 'auth/user-not-found':
-        errorMessage += 'No account found with this email.';
+        errorMessage += 'No account found.';
         break;
       case 'auth/wrong-password':
         errorMessage += 'Incorrect password.';
         break;
       case 'auth/too-many-requests':
-        errorMessage += 'Too many login attempts. Please try again later.';
+        errorMessage += 'Too many attempts. Try later.';
         break;
       default:
-        errorMessage += 'Please check your credentials.';
+        errorMessage += 'Check credentials.';
     }
     
     showMessage(errorMessage, 'error');
+    updateServerStatus(false);
     
   } finally {
-    // Reset login button
+    hideLoading();
     loginBtn.disabled = false;
     loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login to Dashboard';
   }
-});
+}
 
 // Logout Function
 logoutBtn.addEventListener('click', async () => {
   try {
-    await signOut(auth);
+    await auth.signOut();
     dashboard.style.display = 'none';
     loginSection.style.display = 'block';
     adminEmail.value = '';
     adminPass.value = '';
     showMessage('Logged out successfully!', 'success');
+    updateServerStatus(false);
   } catch (error) {
-    showMessage('Logout failed: ' + error.message, 'error');
+    console.error('Logout error:', error);
+  }
+});
+
+// Check Authentication State
+auth.onAuthStateChanged((user) => {
+  if (user) {
+    console.log('User is signed in:', user.email);
+    adminName.textContent = user.email;
+    loginSection.style.display = 'none';
+    dashboard.style.display = 'block';
+    loadRegistrations();
+    startRealtimeUpdates();
+    updateServerStatus(true);
+  } else {
+    console.log('User is signed out');
+    loginSection.style.display = 'flex';
+    dashboard.style.display = 'none';
+    updateServerStatus(false);
   }
 });
 
 // Load Registrations from Firebase
 async function loadRegistrations() {
   try {
-    const registrationsRef = ref(db, 'registrations');
-    const snapshot = await get(registrationsRef);
+    showLoading();
+    
+    const registrationsRef = database.ref('registrations');
+    const snapshot = await registrationsRef.once('value');
     
     if (snapshot.exists()) {
       const data = snapshot.val();
@@ -159,11 +213,14 @@ async function loadRegistrations() {
       allRegistrations = Object.entries(data).map(([key, value]) => ({
         key,
         ...value,
-        timestamp: value.timestamp || Date.now()
+        timestamp: value.timestamp || Date.now(),
+        reg_id: value.reg_id || key.substring(0, 8).toUpperCase()
       }));
       
       // Sort by timestamp (newest first)
       allRegistrations.sort((a, b) => b.timestamp - a.timestamp);
+      
+      console.log(`Loaded ${allRegistrations.length} registrations`);
       
       // Update stats and table
       updateStats();
@@ -179,27 +236,35 @@ async function loadRegistrations() {
   } catch (error) {
     console.error('Error loading registrations:', error);
     showToast('Failed to load registrations: ' + error.message, 'error');
+    updateServerStatus(false);
+  } finally {
+    hideLoading();
   }
 }
 
 // Start Real-time Updates
 function startRealtimeUpdates() {
-  const registrationsRef = ref(db, 'registrations');
+  const registrationsRef = database.ref('registrations');
   
-  onValue(registrationsRef, (snapshot) => {
+  registrationsRef.on('value', (snapshot) => {
     if (snapshot.exists()) {
       const data = snapshot.val();
       
       allRegistrations = Object.entries(data).map(([key, value]) => ({
         key,
         ...value,
-        timestamp: value.timestamp || Date.now()
+        timestamp: value.timestamp || Date.now(),
+        reg_id: value.reg_id || key.substring(0, 8).toUpperCase()
       }));
       
       allRegistrations.sort((a, b) => b.timestamp - a.timestamp);
       updateStats();
       applyFilters();
+      updateServerStatus(true);
     }
+  }, (error) => {
+    console.error('Realtime update error:', error);
+    updateServerStatus(false);
   });
 }
 
@@ -218,10 +283,10 @@ function updateStats() {
     return regDate.getTime() === todayTimestamp;
   }).length;
   
-  totalRegistrations.textContent = total;
-  pendingRegistrations.textContent = pending;
-  approvedRegistrations.textContent = approved;
-  todayRegistrations.textContent = todayRegs;
+  totalRegistrations.textContent = total.toLocaleString();
+  pendingRegistrations.textContent = pending.toLocaleString();
+  approvedRegistrations.textContent = approved.toLocaleString();
+  todayRegistrations.textContent = todayRegs.toLocaleString();
 }
 
 // Apply Filters and Search
@@ -240,13 +305,15 @@ function applyFilters() {
   }
   
   // Apply search
-  const searchTerm = searchInput.value.toLowerCase();
+  const searchTerm = searchInput.value.toLowerCase().trim();
   if (searchTerm) {
     filteredRegistrations = filteredRegistrations.filter(r => 
-      r.name?.toLowerCase().includes(searchTerm) ||
-      r.roll?.toLowerCase().includes(searchTerm) ||
-      r.phone?.toLowerCase().includes(searchTerm) ||
-      r.email?.toLowerCase().includes(searchTerm)
+      (r.name && r.name.toLowerCase().includes(searchTerm)) ||
+      (r.roll && r.roll.toLowerCase().includes(searchTerm)) ||
+      (r.phone && r.phone.includes(searchTerm)) ||
+      (r.email && r.email.toLowerCase().includes(searchTerm)) ||
+      (r.reg_id && r.reg_id.toLowerCase().includes(searchTerm)) ||
+      (r.txid && r.txid.toLowerCase().includes(searchTerm))
     );
   }
   
@@ -260,10 +327,10 @@ function updateTable() {
   if (filteredRegistrations.length === 0) {
     tableBody.innerHTML = `
       <tr>
-        <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
-          <i class="fas fa-inbox" style="font-size: 40px; margin-bottom: 15px; opacity: 0.3;"></i>
-          <p>No registrations found</p>
-          <p style="font-size: 13px; margin-top: 10px;">Try changing your filters or search term</p>
+        <td colspan="9" style="text-align: center; padding: 50px; color: #666;">
+          <i class="fas fa-inbox" style="font-size: 50px; margin-bottom: 20px; opacity: 0.3;"></i>
+          <h3 style="margin-bottom: 10px; font-weight: 600;">No registrations found</h3>
+          <p style="font-size: 14px;">Try adjusting your filters or search term</p>
         </td>
       </tr>
     `;
@@ -272,42 +339,57 @@ function updateTable() {
   
   // Calculate pagination
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, filteredRegistrations.length);
   const pageRegistrations = filteredRegistrations.slice(startIndex, endIndex);
   
   // Generate table rows
   tableBody.innerHTML = pageRegistrations.map(reg => {
     const date = new Date(reg.timestamp);
+    const formattedDate = date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
     const formattedTime = date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit'
     });
-    const formattedDate = date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric'
-    });
     
     return `
-      <tr>
-        <td><strong>${reg.name || 'N/A'}</strong></td>
+      <tr data-key="${reg.key}">
+        <td><strong>${reg.reg_id || reg.key.substring(0, 8)}</strong></td>
+        <td>${reg.name || 'N/A'}</td>
         <td>${reg.roll || 'N/A'}</td>
         <td>${reg.phone || 'N/A'}</td>
-        <td>${reg.email || 'N/A'}</td>
-        <td>${reg.payment || 'N/A'}</td>
         <td>
-          <span class="status-badge status-${reg.status?.toLowerCase() || 'pending'}">
+          <span style="display: flex; align-items: center; gap: 8px;">
+            <i class="fas ${reg.payment === 'bKash' ? 'fa-mobile-alt' : 'fa-wallet'}"></i>
+            ${reg.payment || 'N/A'}
+          </span>
+        </td>
+        <td><code style="background: #f8f9fa; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${reg.txid || 'N/A'}</code></td>
+        <td>
+          <span class="status-badge status-${(reg.status || 'Pending').toLowerCase()}">
             ${reg.status || 'Pending'}
           </span>
         </td>
-        <td title="${new Date(reg.timestamp).toLocaleString()}">
-          ${formattedDate}<br><small>${formattedTime}</small>
+        <td>
+          <div style="font-size: 13px; color: #666;">
+            ${formattedDate}<br>
+            <small>${formattedTime}</small>
+          </div>
         </td>
         <td>
-          ${reg.status === 'Pending' ? `
-            <button class="action-btn approve-btn" onclick="approveRegistration('${reg.key}', '${reg.name}', '${reg.email}')">
-              <i class="fas fa-check"></i> Approve
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="action-btn view-btn" onclick="showDetails('${reg.key}')">
+              <i class="fas fa-eye"></i> View
             </button>
-          ` : '<span style="color: #2ecc71; font-weight: 500;">✓ Approved</span>'}
+            ${reg.status === 'Pending' ? `
+              <button class="action-btn approve-btn" onclick="approveRegistration('${reg.key}')">
+                <i class="fas fa-check"></i> Approve
+              </button>
+            ` : ''}
+          </div>
         </td>
       </tr>
     `;
@@ -316,121 +398,370 @@ function updateTable() {
 
 // Update Pagination
 function updatePagination() {
-  const totalPages = Math.ceil(filteredRegistrations.length / itemsPerPage);
+  const totalItemsCount = filteredRegistrations.length;
+  const totalPages = Math.ceil(totalItemsCount / itemsPerPage);
   
+  const startIndex = (currentPage - 1) * itemsPerPage + 1;
+  const endIndex = Math.min(currentPage * itemsPerPage, totalItemsCount);
+  
+  totalItems.textContent = totalItemsCount.toLocaleString();
+  startItem.textContent = startIndex.toLocaleString();
+  endItem.textContent = endIndex.toLocaleString();
   pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
   
   prevBtn.disabled = currentPage === 1;
   nextBtn.disabled = currentPage === totalPages;
 }
 
-// Function to send approval email via EmailJS
-function sendApprovalEmail(name, email, regId) {
-  // Your EmailJS Service ID and Template ID
-  const serviceID = 'YOUR_SERVICE_ID';  // আপনার service ID বসাবেন
-  const templateID = 'YOUR_TEMPLATE_ID'; // আপনার template ID বসাবেন
-  
-  const templateParams = {
-    student_name: name,
-    reg_id: regId,
-    to_email: email,
-    college_name: 'GMMCC',
-    picnic_date: '25th March, 2026',
-    picnic_venue: 'Shishu Park & Resort'
-  };
-
-  emailjs.send(serviceID, templateID, templateParams)
-    .then(response => {
-      console.log('Email sent successfully!', response.status, response.text);
-      showToast(`Confirmation email sent to ${name}!`, 'success');
-    })
-    .catch(err => {
-      console.error('Email sending error:', err);
-      showToast(`Failed to send email to ${name}`, 'error');
+// Show Registration Details
+window.showDetails = async function(key) {
+  try {
+    const reg = allRegistrations.find(r => r.key === key);
+    if (!reg) return;
+    
+    // Create modal dynamically
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+      animation: fadeIn 0.3s ease;
+    `;
+    
+    const date = new Date(reg.timestamp);
+    const formattedDate = date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
-}
+    
+    modal.innerHTML = `
+      <div style="background: white; border-radius: 15px; width: 100%; max-width: 800px; max-height: 80vh; overflow: auto; animation: slideDown 0.3s ease;">
+        <div style="background: linear-gradient(135deg, #0b3c5d, #09507d); color: white; padding: 25px 30px; border-radius: 15px 15px 0 0; display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="margin: 0; display: flex; align-items: center; gap: 10px; font-size: 20px;">
+            <i class="fas fa-user"></i> Registration Details
+          </h3>
+          <button onclick="this.parentElement.parentElement.parentElement.remove()" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 28px; cursor: pointer; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.3s;">
+            &times;
+          </button>
+        </div>
+        <div style="padding: 30px;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px;">
+            <!-- Student Information -->
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #0b3c5d;">
+              <h4 style="color: #0b3c5d; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; font-size: 16px;">
+                <i class="fas fa-user-circle"></i> Student Information
+              </h4>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Full Name:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">${reg.name || 'N/A'}</span>
+              </div>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">College Roll:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">${reg.roll || 'N/A'}</span>
+              </div>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Group/Department:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">${reg.group || 'N/A'}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">HSC Year:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">${reg.hsc || 'N/A'}</span>
+              </div>
+            </div>
+            
+            <!-- Contact Information -->
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #0b3c5d;">
+              <h4 style="color: #0b3c5d; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; font-size: 16px;">
+                <i class="fas fa-address-card"></i> Contact Information
+              </h4>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Phone Number:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">${reg.phone || 'N/A'}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Email Address:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">${reg.email || 'N/A'}</span>
+              </div>
+            </div>
+            
+            <!-- Payment Information -->
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #0b3c5d;">
+              <h4 style="color: #0b3c5d; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; font-size: 16px;">
+                <i class="fas fa-money-bill-wave"></i> Payment Information
+              </h4>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Payment Method:</span>
+                <span style="color: #0b3c5d; font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                  <i class="fas ${reg.payment === 'bKash' ? 'fa-mobile-alt' : 'fa-wallet'}"></i>
+                  ${reg.payment || 'N/A'}
+                </span>
+              </div>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Transaction ID:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">
+                  <code style="background: #f1f1f1; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-family: 'Courier New', monospace;">${reg.txid || 'N/A'}</code>
+                </span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Amount:</span>
+                <span style="color: #0b3c5d; font-weight: 500; font-size: 16px;">৳ ${reg.payment_amount || '1500'}</span>
+              </div>
+            </div>
+            
+            <!-- Registration Details -->
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #0b3c5d;">
+              <h4 style="color: #0b3c5d; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; font-size: 16px;">
+                <i class="fas fa-info-circle"></i> Registration Details
+              </h4>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Registration ID:</span>
+                <span style="color: #0b3c5d; font-weight: 500; font-size: 15px;"><strong>${reg.reg_id || reg.key.substring(0, 8)}</strong></span>
+              </div>
+              <div style="margin-bottom: 12px; display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px dashed #ddd;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Status:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">
+                  <span style="padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 700; background: ${reg.status === 'Approved' ? '#d4edda' : '#fff3cd'}; color: ${reg.status === 'Approved' ? '#155724' : '#856404'}; border: 1px solid ${reg.status === 'Approved' ? '#c3e6cb' : '#ffeaa7'};">
+                    ${reg.status || 'Pending'}
+                  </span>
+                </span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="font-weight: 600; color: #555; font-size: 14px;">Registered On:</span>
+                <span style="color: #0b3c5d; font-weight: 500;">${formattedDate}</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Action Buttons -->
+          <div style="margin-top: 30px; display: flex; gap: 15px; justify-content: center;">
+            ${reg.status === 'Pending' ? `
+              <button onclick="approveRegistration('${reg.key}'); this.parentElement.parentElement.parentElement.parentElement.remove()" style="padding: 12px 30px; background: linear-gradient(135deg, #2ecc71, #27ae60); color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: all 0.3s;">
+                <i class="fas fa-check"></i> Approve Registration
+              </button>
+            ` : ''}
+            <button onclick="this.parentElement.parentElement.parentElement.parentElement.remove()" style="padding: 12px 30px; background: #f8f9fa; color: #666; border: 2px solid #ddd; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: all 0.3s;">
+              <i class="fas fa-times"></i> Close
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Add styles for animations
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes slideDown {
+        from { transform: translateY(-30px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+      .modal button:hover {
+        transform: translateY(-2px);
+      }
+    `;
+    document.head.appendChild(style);
+    
+    // Close modal when clicking outside
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.remove();
+        style.remove();
+      }
+    });
+    
+    // Close button hover effect
+    const closeBtn = modal.querySelector('button');
+    closeBtn.addEventListener('mouseenter', () => {
+      closeBtn.style.background = 'rgba(255,255,255,0.3)';
+    });
+    closeBtn.addEventListener('mouseleave', () => {
+      closeBtn.style.background = 'rgba(255,255,255,0.2)';
+    });
+    
+  } catch (error) {
+    console.error('Error showing details:', error);
+    showToast('Failed to load registration details', 'error');
+  }
+};
 
-// Approve Registration with Email Notification
-window.approveRegistration = async function(key, name, email) {
-  // Show confirmation dialog
-  if (!confirm(`Are you sure you want to approve registration for ${name}?\n\nAn approval email will be sent to ${email}`)) {
+// Approve Registration
+window.approveRegistration = async function(key) {
+  const reg = allRegistrations.find(r => r.key === key);
+  if (!reg) return;
+  
+  if (!confirm(`Are you sure you want to approve registration for ${reg.name}?\n\nAn approval email will be sent to ${reg.email}`)) {
     return;
   }
   
   try {
+    showLoading();
+    
     // Update status in Firebase
-    await update(ref(db, 'registrations/' + key), { 
+    const updates = {
       status: 'Approved',
       approvedAt: Date.now(),
       approvedBy: adminName.textContent || 'Admin'
-    });
+    };
     
-    // Show success message
-    showToast(`Registration approved for ${name}!`, 'success');
+    await database.ref(`registrations/${key}`).update(updates);
     
-    // Send approval email if email exists
-    if (email && email.includes('@')) {
-      // Use registration ID from database or generate one
-      const regRef = ref(db, 'registrations/' + key);
-      const snapshot = await get(regRef);
-      
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const regId = data.reg_id || key.substring(0, 8).toUpperCase();
-        
-        // Send email
-        sendApprovalEmail(name, email, regId);
-        
-        // Update local registration status
-        const regIndex = allRegistrations.findIndex(r => r.key === key);
-        if (regIndex !== -1) {
-          allRegistrations[regIndex].status = 'Approved';
-          updateStats();
-          applyFilters();
-        }
+    // Update local registration
+    const regIndex = allRegistrations.findIndex(r => r.key === key);
+    if (regIndex !== -1) {
+      allRegistrations[regIndex] = { ...allRegistrations[regIndex], ...updates };
+    }
+    
+    updateStats();
+    applyFilters();
+    
+    // Send approval email using your template
+    if (reg.email && reg.email.includes('@')) {
+      const emailResult = await sendApprovalEmail(reg, key);
+      if (emailResult.success) {
+        showToast(`Registration approved and email sent to ${reg.name}!`, 'success');
+      } else {
+        showToast(`Registration approved for ${reg.name}! (Email failed: ${emailResult.error})`, 'warning');
       }
     } else {
-      showToast(`Registration approved, but no email sent (invalid email: ${email})`, 'warning');
-      
-      // Update local registration status even without email
-      const regIndex = allRegistrations.findIndex(r => r.key === key);
-      if (regIndex !== -1) {
-        allRegistrations[regIndex].status = 'Approved';
-        updateStats();
-        applyFilters();
-      }
+      showToast(`Registration approved for ${reg.name}! (No email sent - invalid email)`, 'warning');
     }
     
   } catch (error) {
     console.error('Error approving registration:', error);
     showToast('Failed to approve registration: ' + error.message, 'error');
+  } finally {
+    hideLoading();
   }
 };
 
-// Event Listeners for Filters
-searchInput.addEventListener('input', () => {
-  applyFilters();
+// Send Approval Email via EmailJS - আপনার template ব্যবহার করে
+async function sendApprovalEmail(registration, key) {
+  try {
+    const templateParams = {
+      student_name: registration.name,
+      reg_id: registration.reg_id || key.substring(0, 8).toUpperCase(),
+      to_email: registration.email
+    };
+
+    console.log('Sending approval email to:', registration.email);
+    console.log('EmailJS Config:', EMAILJS_CONFIG);
+    console.log('Template Params:', templateParams);
+    
+    const response = await emailjs.send(
+      EMAILJS_CONFIG.SERVICE_ID,
+      EMAILJS_CONFIG.TEMPLATE_ID,
+      templateParams
+    );
+    
+    console.log('Email sent successfully:', response);
+    return { success: true, response };
+    
+  } catch (error) {
+    console.error('Email sending error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      text: error.text,
+      status: error.status
+    });
+    return { 
+      success: false, 
+      error: error.text || error.message || 'Unknown error' 
+    };
+  }
+}
+
+// Export to CSV
+exportBtn.addEventListener('click', () => {
+  if (filteredRegistrations.length === 0) {
+    showToast('No data to export', 'warning');
+    return;
+  }
+  
+  try {
+    const headers = ['Registration ID', 'Name', 'Roll', 'Phone', 'Email', 'Group', 'HSC Year', 'Payment Method', 'Transaction ID', 'Status', 'Registered Date', 'Amount', 'Approved Date', 'Approved By'];
+    
+    const csvData = filteredRegistrations.map(reg => {
+      const date = new Date(reg.timestamp);
+      const approvedDate = reg.approvedAt ? new Date(reg.approvedAt).toLocaleDateString('en-US') : '';
+      
+      return [
+        reg.reg_id || reg.key.substring(0, 8),
+        reg.name || '',
+        reg.roll || '',
+        reg.phone || '',
+        reg.email || '',
+        reg.group || '',
+        reg.hsc || '',
+        reg.payment || '',
+        reg.txid || '',
+        reg.status || 'Pending',
+        date.toLocaleDateString('en-US'),
+        reg.payment_amount || '1500',
+        approvedDate,
+        reg.approvedBy || ''
+      ];
+    });
+    
+    const csv = [headers, ...csvData].map(row => 
+      row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+    ).join('\n');
+    
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', `gmmcc_registrations_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showToast(`Exported ${filteredRegistrations.length} registrations to CSV`, 'success');
+    
+  } catch (error) {
+    console.error('Export error:', error);
+    showToast('Failed to export data', 'error');
+  }
 });
 
-paymentFilter.addEventListener('change', () => {
-  applyFilters();
+// Event Listeners
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    applyFilters();
+  }, 500);
 });
+
+paymentFilter.addEventListener('change', applyFilters);
 
 // Filter buttons
 document.querySelectorAll('.filter-btn').forEach(button => {
   button.addEventListener('click', function() {
-    // Remove active class from all buttons
     document.querySelectorAll('.filter-btn').forEach(btn => {
       btn.classList.remove('active');
     });
     
-    // Add active class to clicked button
     this.classList.add('active');
-    
-    // Update current filter
     currentFilter = this.dataset.filter;
-    
-    // Apply filters
     applyFilters();
   });
 });
@@ -456,7 +787,7 @@ nextBtn.addEventListener('click', () => {
 // Refresh button
 refreshBtn.addEventListener('click', () => {
   loadRegistrations();
-  showToast('Data refreshed!', 'success');
+  showToast('Data refreshed successfully!', 'success');
 });
 
 // Helper Functions
@@ -465,7 +796,6 @@ function showMessage(message, type) {
   loginMsg.className = `message ${type}`;
   loginMsg.style.display = 'block';
   
-  // Auto-hide message after 3 seconds
   setTimeout(() => {
     loginMsg.style.display = 'none';
   }, 3000);
@@ -477,81 +807,136 @@ function showToast(message, type = 'info') {
   toast.className = `toast ${type}`;
   toast.style.display = 'flex';
   
-  // Auto-hide toast after 3 seconds
   setTimeout(() => {
     toast.style.display = 'none';
   }, 3000);
 }
 
+function updateServerStatus(connected) {
+  isConnected = connected;
+  
+  if (serverStatus && serverStatusText) {
+    if (connected) {
+      serverStatus.className = 'fas fa-circle connected';
+      serverStatusText.textContent = 'Connected';
+      serverStatus.style.color = '#2ecc71';
+      serverStatus.parentElement.classList.add('connected');
+      serverStatus.parentElement.classList.remove('disconnected');
+    } else {
+      serverStatus.className = 'fas fa-circle disconnected';
+      serverStatusText.textContent = 'Disconnected';
+      serverStatus.style.color = '#e74c3c';
+      serverStatus.parentElement.classList.add('disconnected');
+      serverStatus.parentElement.classList.remove('connected');
+    }
+  }
+}
+
 // Auto-focus email input on page load
 window.addEventListener('load', () => {
   adminEmail.focus();
+  updateServerStatus(false);
+  
+  // Check Firebase connection
+  testFirebaseConnection();
 });
 
-// Email Settings Modal (Optional - for changing email settings)
-function showEmailSettings() {
-  const modal = document.createElement('div');
-  modal.className = 'email-settings-modal';
-  modal.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0,0,0,0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  `;
-  
-  modal.innerHTML = `
-    <div style="background: white; padding: 30px; border-radius: 10px; width: 90%; max-width: 500px;">
-      <h3 style="margin-bottom: 20px; color: #0b3c5d;">
-        <i class="fas fa-envelope"></i> Email Settings
-      </h3>
-      <div style="margin-bottom: 15px;">
-        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Service ID</label>
-        <input type="text" id="emailServiceID" value="YOUR_SERVICE_ID" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
-      </div>
-      <div style="margin-bottom: 20px;">
-        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Template ID</label>
-        <input type="text" id="emailTemplateID" value="YOUR_TEMPLATE_ID" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
-      </div>
-      <div style="display: flex; gap: 10px; justify-content: flex-end;">
-        <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding: 10px 20px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 5px; cursor: pointer;">
-          Cancel
-        </button>
-        <button onclick="saveEmailSettings()" style="padding: 10px 20px; background: #0b3c5d; color: white; border: none; border-radius: 5px; cursor: pointer;">
-          Save Settings
-        </button>
-      </div>
-    </div>
-  `;
-  
-  document.body.appendChild(modal);
+// Test Firebase Connection
+async function testFirebaseConnection() {
+  try {
+    const testRef = database.ref('.info/connected');
+    testRef.on('value', (snapshot) => {
+      updateServerStatus(snapshot.val() === true);
+    });
+  } catch (error) {
+    console.error('Firebase connection test error:', error);
+    updateServerStatus(false);
+  }
 }
 
-// Function to save email settings
-window.saveEmailSettings = function() {
-  const serviceID = document.getElementById('emailServiceID').value;
-  const templateID = document.getElementById('emailTemplateID').value;
-  
-  // Here you would typically save these to localStorage or your database
-  localStorage.setItem('emailServiceID', serviceID);
-  localStorage.setItem('emailTemplateID', templateID);
-  
-  showToast('Email settings saved!', 'success');
-  document.querySelector('.email-settings-modal').remove();
+// EmailJS Test Function (Debugging এর জন্য)
+window.testEmailJS = async function() {
+  try {
+    const testParams = {
+      student_name: 'Test Student',
+      reg_id: 'GMMCC-2026-TEST',
+      to_email: 'test@example.com'
+    };
+    
+    const response = await emailjs.send(
+      EMAILJS_CONFIG.SERVICE_ID,
+      EMAILJS_CONFIG.TEMPLATE_ID,
+      testParams
+    );
+    
+    console.log('EmailJS Test Successful:', response);
+    showToast('EmailJS test successful!', 'success');
+    
+  } catch (error) {
+    console.error('EmailJS Test Failed:', error);
+    showToast(`EmailJS test failed: ${error.text || error.message}`, 'error');
+  }
 };
 
-// Load saved email settings on page load
-window.addEventListener('load', () => {
-  const savedServiceID = localStorage.getItem('emailServiceID');
-  const savedTemplateID = localStorage.getItem('emailTemplateID');
-  
-  if (savedServiceID && savedTemplateID) {
-    // You can use these saved values in your sendApprovalEmail function
-    console.log('Loaded saved email settings');
-  }
-});
+// Add connection status styles
+const connectionStyles = document.createElement('style');
+connectionStyles.textContent = `
+.server-status.connected {
+  color: #2ecc71;
+}
+.server-status.disconnected {
+  color: #e74c3c;
+}
+.server-status i {
+  margin-right: 8px;
+}
+`;
+document.head.appendChild(connectionStyles);
+
+// Add toast notification styles
+const toastStyles = document.createElement('style');
+toastStyles.textContent = `
+.toast {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  padding: 15px 25px;
+  background: #333;
+  color: white;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  gap: 15px;
+  animation: slideInRight 0.3s ease;
+  max-width: 400px;
+  border-left: 5px solid;
+}
+
+.toast.success {
+  background: #2ecc71;
+  border-left-color: #27ae60;
+}
+
+.toast.error {
+  background: #e74c3c;
+  border-left-color: #c0392b;
+}
+
+.toast.info {
+  background: #3498db;
+  border-left-color: #2980b9;
+}
+
+.toast.warning {
+  background: #f39c12;
+  border-left-color: #d68910;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+`;
+document.head.appendChild(toastStyles);
